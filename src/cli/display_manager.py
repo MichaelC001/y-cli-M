@@ -66,15 +66,36 @@ class DisplayManager:
             return
 
         timestamp = f"[timestamp]{message.timestamp}[/timestamp]"
-        role = f"[{message.role}]{message.role.capitalize()}[/{message.role}]"
         index_str = f"[{index}] " if index is not None else ""
 
-        # Add model/provider info if available
-        model_info = ""
-        if message.model:
-            provider = f" @ {message.provider}" if message.provider else ""
-            reasoning = f" (effort: {message.reasoning_effort})" if message.reasoning_effort else ""
-            model_info = f" {message.model}{provider}{reasoning}"
+        # Initialize title components
+        panel_role_display_text = ""
+        current_border_style = message.role # Default border
+        model_info = "" # Default model info for title
+
+        # Determine role text, border style, and model_info for the panel title
+        if message.role == "user":
+            if message.server or message.tool: # User message is a tool result
+                panel_role_display_text = f"[tool]Tool[/tool]"
+                current_border_style = "tool" # Blue border for tool messages
+                model_info = f" {message.tool} @ {message.server}" # Show tool@server
+            else: # Normal user message
+                panel_role_display_text = f"[timestamp]Michael[/timestamp]" # Dim white "Michael"
+                if index is not None:
+                    index_str = f"[timestamp][{index}] [/timestamp]" # Apply timestamp style
+                # current_border_style remains "user" (green)
+                # model_info remains empty for normal user messages
+        elif message.role == "assistant":
+            panel_role_display_text = f"[{message.role}]{message.role.capitalize()}[/{message.role}]"
+            # current_border_style remains "assistant" (cyan)
+            if message.model: # Add model/provider info for assistant
+                provider_info_str = f" @ {message.provider}" if message.provider else ""
+                reasoning_effort_str = f" (effort: {message.reasoning_effort})" if message.reasoning_effort else ""
+                model_info = f" {message.model}{provider_info_str}{reasoning_effort_str}"
+        else: # System or other roles
+            panel_role_display_text = f"[{message.role}]{message.role.capitalize()}[/{message.role}]"
+            # current_border_style remains as message.role (e.g. yellow for system)
+            # model_info remains empty
 
         # Extract content text from structured content if needed
         content = message.content
@@ -91,30 +112,27 @@ class DisplayManager:
             display_content = f"```markdown\n{message.reasoning_content}\n```\n"
         display_content += content
 
-        # Add MCP server/tool info if available
-        if message.role == "assistant" and (message.server or message.tool):
-            mcp_info = "```\n"
+        # Add MCP server/tool info if available (for assistant messages that used tools)
+        # This is for the *body* of the panel, not the title.
+        if message.role == "assistant" and (message.server or message.tool) and not (message.tool == model_info.split(" @ ")[0].strip()):
+            # The 'and not (message.tool == model_info...)' is to avoid duplicating tool info if it's already in title
+            # However, model_info in title is for assistant's *own* model, not necessarily the tool it just ran.
+            # This part is about showing details of a tool the assistant *just used in its response content*.
+            mcp_info_str = "```\n"
             if message.server:
-                mcp_info += f"Server: {message.server}\n"
+                mcp_info_str += f"Server: {message.server}\n"
             if message.tool:
-                mcp_info += f"Tool: {message.tool}\n"
+                mcp_info_str += f"Tool: {message.tool}\n"
             if message.arguments:
-                import json
-                mcp_info += f"Arguments: {json.dumps(message.arguments, indent=2, ensure_ascii=False)}\n"
-            mcp_info += "```\n"
-            display_content += f"\n{mcp_info}"
-
-        # Determine border style - change User to Assistant style if has MCP info
-        border_style = message.role
-        if message.role == "user" and (message.server or message.tool):
-            role = f"[tool]Tool[tool]"
-            border_style = "tool"  # Use Assistant color for User with MCP info
-            model_info = f" {message.tool} @ {message.server}"  # Clear model info for User with MCP info
+                import json # Keep import here for clarity of this block's dependency
+                mcp_info_str += f"Arguments: {json.dumps(message.arguments, indent=2, ensure_ascii=False)}\n"
+            mcp_info_str += "```\n"
+            display_content += f"\n{mcp_info_str}"
 
         self.console.print(Panel(
             Markdown(display_content),
-            title=f"{index_str}{role} {timestamp}{model_info}",
-            border_style=border_style
+            title=f"{index_str}{panel_role_display_text} {timestamp}{model_info}",
+            border_style=current_border_style
         ))
 
     async def _collect_stream_content(self, response_stream, stream_buffer: StreamBuffer) -> Tuple[str, str, Optional[str], Optional[str]]:
@@ -216,7 +234,10 @@ class DisplayManager:
         )
 
         has_started_printing_content = False
-        status_text = f"[bold green]Thinking... {model_name_for_status if model_name_for_status else ''}"
+        if model_name_for_status:
+            status_text = f"[bold green]{model_name_for_status}[/bold green]"
+        else:
+            status_text = f"[bold green]Thinking...[/bold green]"
         current_live_update_object = Status(status_text.strip(), spinner="dots", console=self.console)
 
         # Live is NOT transient. Its last state will persist.

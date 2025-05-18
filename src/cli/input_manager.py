@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple, Iterable
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import FormattedText
 from rich.console import Console
 from chat.models import Message
 
@@ -105,7 +106,7 @@ class InputManager:
         """
         try:
             text_input = prompt(
-                'Enter: ',
+                FormattedText([('ansicyan', 'Input: ')]),
                 completer=self.slash_completer,
                 complete_while_typing=True, # <-- Re-enable this
                 in_thread=True
