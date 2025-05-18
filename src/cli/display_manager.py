@@ -55,6 +55,8 @@ class DisplayManager:
         self.console = Console(theme=custom_theme)
         self.max_chars_per_second = bot_config.print_speed if bot_config and bot_config.print_speed else 1000
         self.show_reasoning = bot_config.show_reasoning if bot_config and bot_config.show_reasoning is not None else False
+        # Ensure console width is detected, especially if running in a non-standard terminal
+        # self.console.size = self.console.size # Rich handles this automatically, explicit setting might not always be best
         logger.info("DisplayManager initialized.")
 
     def display_message_panel(self, message: Message, index: Optional[int] = None):
@@ -208,73 +210,114 @@ class DisplayManager:
             Tuple[str, str, Optional[str], Optional[str]]: 
                 (complete response text, reasoning text, provider_info, model_info)
         """
-        stream_buffer = StreamBuffer(max_chars_per_second=self.max_chars_per_second)
-        max_lines_for_live_deque = self.console.height 
-        content_buffer_for_live = deque(maxlen=max_lines_for_live_deque) 
-        
-        collection_task = asyncio.create_task(
-            self._collect_stream_content(response_stream, stream_buffer) # _collect_stream_content feeds stream_buffer
-        )
+        # StreamBuffer is not directly used for display here but _collect_stream_content might use it.
+        # For this simplified approach, we'll collect directly.
+        # stream_buffer = StreamBuffer(max_chars_per_second=self.max_chars_per_second)
 
-        has_started_printing_content = False
+        all_collected_content: List[str] = []
+        all_collected_reasoning: List[str] = []
+        provider_info_from_stream: Optional[str] = None
+        model_info_from_stream: Optional[str] = None
+        is_reasoning_block = False # To manage reasoning/summary labels if shown
+
         status_text = f"[bold green]Thinking... {model_name_for_status if model_name_for_status else ''}"
-        initial_spinner_message = Status(status_text.strip(), spinner="dots", console=self.console)
-        current_live_display_object = None # To track what Live is showing (Status or Markdown)
-
-        with Live(console=self.console, refresh_per_second=10, vertical_overflow="ellipsis", auto_refresh=True) as live:
-            live.update(initial_spinner_message)
-            current_live_display_object = initial_spinner_message
-
-            while True:
-                # Check if collection is done and all buffered content has been processed by Live
-                if collection_task.done() and not stream_buffer.has_remaining:
-                    break # Exit Live loop, final print will happen after
-
-                chunk_from_buffer = stream_buffer.get_next_chunk()
-                if chunk_from_buffer:
-                    if not has_started_printing_content:
-                        content_buffer_for_live.clear() # Clear if initial message was spinner
-                        has_started_printing_content = True
-                    
-                    self._update_display_buffer(content_buffer_for_live, chunk_from_buffer)
-                    # For Live, we show the content from the potentially truncated deque
-                    new_live_markdown = Markdown("\n".join(content_buffer_for_live))
-                    if current_live_display_object != new_live_markdown: 
-                        live.update(new_live_markdown)
-                        current_live_display_object = new_live_markdown
-                
-                elif not collection_task.done(): 
-                    await asyncio.sleep(0.05)
-                elif collection_task.done() and stream_buffer.has_remaining:
-                     await asyncio.sleep(0.01) 
-                else: 
-                     await asyncio.sleep(0.05)
         
-        # --- Live context has ended --- 
-        logger.info("Live display loop ended. Preparing for final print.")
+        with Status(status_text.strip(), spinner="dots", console=self.console) as status:
+            async for chunk_data_obj in response_stream:
+                if provider_info_from_stream is None and hasattr(chunk_data_obj, 'provider') and chunk_data_obj.provider:
+                    provider_info_from_stream = chunk_data_obj.provider
+                if model_info_from_stream is None and hasattr(chunk_data_obj, 'model') and chunk_data_obj.model:
+                    model_info_from_stream = chunk_data_obj.model
+                    # Update status message once model is known, if not provided initially
+                    if not model_name_for_status and model_info_from_stream:
+                        status.update(f"[bold green]Receiving from {model_info_from_stream}...", spinner="dots")
+                    elif model_name_for_status and model_info_from_stream and model_name_for_status != model_info_from_stream:
+                        # If initial model was a guess/default and stream provides actual
+                        status.update(f"[bold green]Receiving from {model_info_from_stream}...", spinner="dots")
 
-        # Get the full, untruncated content from the collection task
-        full_text_content, full_reasoning_content, provider, model = await collection_task
-        
-        # Construct the final display string
-        final_display_string = ""
-        if self.show_reasoning and full_reasoning_content:
-            final_display_string += f"```markdown\n{full_reasoning_content}\n```\n"
-        final_display_string += full_text_content
-        
-        logger.debug(f"Final display string for Markdown rendering (len: {len(final_display_string)}):\n{final_display_string}")
 
-        if final_display_string.strip():
-            logger.info("About to execute self.console.print(Markdown(final_display_string.strip())) for the FINAL message.")
-            self.console.print(Markdown(final_display_string.strip()))
-            logger.info("Finished self.console.print(Markdown(final_display_string.strip())) for the FINAL message.")
-        elif not has_started_printing_content: 
+                if not (hasattr(chunk_data_obj, 'choices') and chunk_data_obj.choices and hasattr(chunk_data_obj.choices[0], 'delta')):
+                    continue
+
+                delta = chunk_data_obj.choices[0].delta
+                chunk_content = delta.content if hasattr(delta, 'content') else None
+                chunk_reasoning = delta.reasoning_content if hasattr(delta, 'reasoning_content') else None
+
+                if chunk_reasoning is not None:
+                    if not is_reasoning_block: # First reasoning chunk
+                        is_reasoning_block = True
+                        if self.show_reasoning:
+                            all_collected_content.append("> reasoning\n") # Add label if showing
+                    all_collected_reasoning.append(chunk_reasoning)
+                    if self.show_reasoning:
+                        all_collected_content.append(chunk_reasoning) # Append to main display if shown
+
+                # If reasoning block just ended (current chunk_reasoning is None but prev wasn't)
+                # AND there's actual content in this chunk, it means summary is starting
+                if is_reasoning_block and chunk_reasoning is None and chunk_content is not None:
+                    if self.show_reasoning:
+                         all_collected_content.append("\n> summary\n") # Add label
+                    is_reasoning_block = False # Reset flag
+
+                if chunk_content is not None:
+                    all_collected_content.append(chunk_content)
+        
+        # --- Status context has ended ---
+        logger.info("Response collection finished. Preparing for final print.")
+
+        final_text_content = "".join(all_collected_content)
+        final_reasoning_content = "".join(all_collected_reasoning) # This is the raw reasoning
+
+        # Construct the display string (which might differ from final_text_content if reasoning isn't shown)
+        # If reasoning is not shown, final_text_content already excludes reasoning markers and content.
+        # If reasoning IS shown, final_text_content includes the markers and reasoning.
+        # The goal is to display final_text_content.
+        # The `full_reasoning_content` returned by the function should be the raw reasoning.
+        
+        display_markdown_string = final_text_content # This will be printed
+
+        # logger.debug(f"Final display string for Markdown rendering (len: {len(display_markdown_string)}):\n{display_markdown_string}")
+
+        if display_markdown_string.strip():
+            logger.info("About to execute self.console.print(Markdown(display_markdown_string.strip())) for the FINAL message.")
+            self.console.print(Markdown(display_markdown_string.strip()))
+            logger.info("Finished self.console.print(Markdown(display_markdown_string.strip())) for the FINAL message.")
+        else:
             logger.info("Final print: No response or empty response received.")
             self.console.print(Markdown("🤔 No response or empty response received."))
-        else:
-            logger.info("Final print: Content was streamed but ended up empty overall.")
 
-        return full_text_content, full_reasoning_content, provider, model
+        # Return the raw full text (excluding any reasoning markers if reasoning wasn't shown)
+        # and the raw full reasoning.
+        # If self.show_reasoning is False, final_text_content will be just the summary.
+        # If self.show_reasoning is True, final_text_content contains "> reasoning..." etc.
+        # We need to decide what "full_text_content" for the return value means.
+        # Let's assume it means the actual assistant's message content, without our added markers.
+        
+        # Reconstruct the "true" assistant message content if reasoning was shown and thus markers were added
+        true_assistant_content = ""
+        if self.show_reasoning:
+            # Find summary part if it exists
+            summary_marker = "\n> summary\n"
+            if summary_marker in final_text_content:
+                true_assistant_content = final_text_content.split(summary_marker, 1)[1]
+            else: # It might have been all reasoning, or no markers were added
+                true_assistant_content = "".join([c for c in all_collected_content if c not in ("> reasoning\n", "\n> summary\n") and not any(r_chunk in c for r_chunk in all_collected_reasoning)])
+                if not true_assistant_content and not final_reasoning_content : # If all_collected_content was only markers
+                     true_assistant_content = "".join(all_collected_content) # just use it as is
+                elif not true_assistant_content and final_reasoning_content and not "".join(all_collected_content).strip().startswith("> reasoning"):
+                    # This case means reasoning was collected, but not shown, so final_text_content is the true content
+                     true_assistant_content = final_text_content
+
+        else: # Reasoning not shown, so final_text_content is the true content
+            true_assistant_content = final_text_content
+            
+        # If true_assistant_content is empty but full_reasoning_content exists, it means the LLM *only* provided reasoning.
+        # In this scenario, the "true_assistant_content" should probably be the reasoning itself, or a note.
+        # For now, let's prioritize reasoning if primary content is empty.
+        if not true_assistant_content.strip() and final_reasoning_content.strip():
+            true_assistant_content = final_reasoning_content # Or a message like "[Only reasoning content was provided]"
+
+        return true_assistant_content, final_reasoning_content, provider_info_from_stream, model_info_from_stream
 
     def display_help(self):
         """Display help information about available commands and features"""
