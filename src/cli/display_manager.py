@@ -57,12 +57,12 @@ class DisplayManager:
         self.show_reasoning = bot_config.show_reasoning if bot_config and bot_config.show_reasoning is not None else False
         # Ensure console width is detected, especially if running in a non-standard terminal
         # self.console.size = self.console.size # Rich handles this automatically, explicit setting might not always be best
-        logger.info("DisplayManager initialized.")
+        logger.debug("DisplayManager initialized.")
 
     def display_message_panel(self, message: Message, index: Optional[int] = None):
         logger.debug(f"display_message_panel called for role: {message.role}, already_displayed_live: {hasattr(message, 'already_displayed_live') and message.already_displayed_live}")
         if message.role == "assistant" and hasattr(message, 'already_displayed_live') and message.already_displayed_live:
-            logger.info("display_message_panel: Assistant message already displayed live, skipping panel.")
+            logger.debug("display_message_panel: Assistant message already displayed live, skipping panel.")
             return
 
         timestamp = f"[timestamp]{message.timestamp}[/timestamp]"
@@ -254,7 +254,7 @@ class DisplayManager:
             # Otherwise, Live's last state is already the full accumulated_markdown_for_live_display.
 
         # --- Live context has ended. Its display will persist. ---
-        logger.info("Live display loop ended.")
+        logger.debug("Live display loop ended.")
 
         final_display_string, raw_reasoning_string, provider, model = await collection_task
         
