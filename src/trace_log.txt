@@ -1,0 +1,59 @@
+2025-05-17 21:13:05.593 | TRACE    | cli.display_manager:_collect_stream_content:158 - Collected content chunk: ''
+2025-05-17 21:13:05.594 | TRACE    | cli.display_manager:_collect_stream_content:160 - Collected reasoning chunk: 'Searching "Class" Definition\n\nI\'m kicking off this exploration by hitting the web. I\'ll start with a search for "what is a class in python." I\'ll use the default number of results, ten should give me a good starting point.\n\n\n'
+2025-05-17 21:13:05.629 | TRACE    | cli.display_manager:_collect_stream_content:158 - Collected content chunk: '<thinking>\nThe user is asking for'
+2025-05-17 21:13:05.665 | TRACE    | cli.display_manager:_collect_stream_content:158 - Collected content chunk: ' a definition of a "class" in Python. This is a fundamental concept in object-oriented programming. I should use a search tool to get a good definition and explanation. `brave_web_search` is appropriate for this.<use_mcp_tool>\n<server_name>brave-'
+2025-05-17 21:13:06.172 | TRACE    | cli.display_manager:_collect_stream_content:158 - Collected content chunk: 'search</server_name>\n<tool_name>brave_web_search</tool_name>\n<arguments>\n{\n  "query": "what is a class in python"\n}\n</arguments>\n</use_mcp_tool>'
+2025-05-17 21:13:06.173 | TRACE    | cli.display_manager:_collect_stream_content:158 - Collected content chunk: ''
+2025-05-17 21:13:06.320 | DEBUG    | cli.display_manager:stream_response:270 - Final display string for Markdown rendering:
+<thinking>
+The user is asking for a definition of a "class" in Python. This is a fundamental concept in object-oriented programming. I should use a search tool to get a good definition and explanation. `brave_web_search` is appropriate for this.<use_mcp_tool>
+<server_name>brave-search</server_name>
+<tool_name>brave_web_search</tool_name>
+<arguments>
+{
+  "query": "what is a class in python"
+}
+</arguments>
+</use_mcp_tool>
+Traceback (most recent call last):
+  File "/Users/michael/Documents/y-cli-develop_v2/src/cli.py", line 4, in <module>
+    cli()
+  File "/Users/michael/.venv/lib/python3.12/site-packages/click/core.py", line 1161, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/.venv/lib/python3.12/site-packages/click/core.py", line 1082, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/Users/michael/.venv/lib/python3.12/site-packages/click/core.py", line 1697, in invoke
+    return _process_result(sub_ctx.command.invoke(sub_ctx))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/.venv/lib/python3.12/site-packages/click/core.py", line 1443, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/.venv/lib/python3.12/site-packages/click/core.py", line 788, in invoke
+    return __callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/Documents/y-cli-develop_v2/src/cli/commands/chat/chat.py", line 82, in chat
+    asyncio.run(chat_app.chat())
+  File "/Users/michael/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/michael/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/.local/share/uv/python/cpython-3.12.9-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/michael/Documents/y-cli-develop_v2/src/chat/app.py", line 60, in chat
+    await self.chat_manager.run()
+  File "/Users/michael/Documents/y-cli-develop_v2/src/chat/chat_manager.py", line 374, in run
+    await self.process_user_message(user_message)
+  File "/Users/michael/Documents/y-cli-develop_v2/src/chat/chat_manager.py", line 183, in process_user_message
+    await self.process_assistant_message(assistant_message)
+  File "/Users/michael/Documents/y-cli-develop_v2/src/chat/chat_manager.py", line 224, in process_assistant_message
+    if not self.get_user_confirmation(tool_content, server_name, tool_name):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/michael/Documents/y-cli-develop_v2/src/chat/chat_manager.py", line 115, in get_user_confirmation
+    response = self.input_manager.get_input_direct(prompt_message).strip().lower()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'InputManager' object has no attribute 'get_input_direct'

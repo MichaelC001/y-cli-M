@@ -89,7 +89,7 @@ class ChatManager:
         """Get user confirmation before executing tool use
 
         Args:
-            content: The tool use content
+            content: The tool use content (currently unused in prompt after this change)
             server_name: The MCP server name
             tool_name: The tool name being executed
 
@@ -104,14 +104,19 @@ class ChatManager:
                     logger.info(f"Auto-confirming tool use for {server_name}/{tool_name}")
                 return True
 
-        # Otherwise proceed with normal confirmation
-        self.display_manager.console.print("\n[yellow]Tool use detected in response:[/yellow]")
+        prompt_message = f"Tool use confirm [{server_name}/{tool_name}] (y/n): "
+        if not server_name and not tool_name:
+            prompt_message = "Tool use confirm (y/n): " 
+        
+        self.display_manager.console.print() # Add a newline for spacing
         while True:
-            response = input("\nWould you like to proceed with tool execution? (y/n): ").strip().lower()
+            # Use standard input() for simple y/n confirmation
+            response = input(prompt_message).strip().lower()
             if response in ['y', 'yes']:
                 return True
             elif response in ['n', 'no']:
                 return False
+            # If response is invalid, print error message directly using console
             self.display_manager.console.print("[yellow]Please answer 'y' or 'n'[/yellow]")
 
     async def process_user_message(self, user_message: Message):
@@ -121,12 +126,60 @@ class ChatManager:
         if isinstance(user_message.content, str):
             self.last_printed_text_output = user_message.content
         elif isinstance(user_message.content, list):
-             # Assuming user message content list has text part
             self.last_printed_text_output = next((part.get('text') for part in user_message.content if part.get('type') == 'text'), None)
 
-        assistant_message, external_id = await self.provider.call_chat_completions(self.messages, self.current_chat, self.system_prompt)
+        stream_generator = None
+        external_id = None
+        assistant_message_content_full = ""
+        assistant_reasoning_content_full = ""
+        provider_name_from_stream = self.bot_config.name # Default
+        model_name_from_stream = self.bot_config.model # Default
+
+        try:
+            # Step 1: Get the stream generator from the provider (makes the API call)
+            # This spinner covers the initial request to the provider.
+            with self.display_manager.console.status("[bold green]Requesting response...", spinner="dots"):
+                stream_generator, external_id = await self.provider.call_chat_completions(
+                    self.messages, self.current_chat, self.system_prompt
+                )
+
+            # Step 2: Stream the response using DisplayManager.
+            # DisplayManager will show its own "Thinking..." until first content arrives.
+            if stream_generator:
+                # stream_response now returns provider and model info as well
+                assistant_message_content_full, assistant_reasoning_content_full, \
+                    provider_from_display, model_from_display = await self.display_manager.stream_response(
+                        stream_generator, 
+                        model_name_for_status=self.bot_config.model # Pass the model name here
+                    )
+                
+                if provider_from_display:
+                    provider_name_from_stream = provider_from_display
+                # Use model_from_display if available, otherwise stick with bot_config.model if it was used for status
+                model_name_from_stream = model_from_display if model_from_display else self.bot_config.model
+            else:
+                assistant_message_content_full = "Error: Could not retrieve response stream from provider."
+                # No stream to display, so no provider/model info from stream.
+
+        except Exception as e:
+            logger.error(f"Error during chat completion or streaming: {e}")
+            self.display_manager.console.print(f"[red]Error: {e}[/red]")
+            assistant_message_content_full = f"An error occurred: {str(e)}"
+
         if external_id:
             self.external_id = external_id
+        
+        # Step 3: Create and process the assistant message
+        assistant_message = create_message(
+            "assistant",
+            assistant_message_content_full,
+            reasoning_content=assistant_reasoning_content_full if assistant_reasoning_content_full else None,
+            provider=provider_name_from_stream, 
+            model=model_name_from_stream, 
+            reasoning_effort=self.bot_config.reasoning_effort if self.bot_config.reasoning_effort else None
+        )
+        assistant_message.already_displayed_live = True 
+        
         await self.process_assistant_message(assistant_message)
         await self.persist_chat()
 

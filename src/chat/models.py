@@ -24,6 +24,7 @@ class Message:
     server: Optional[str] = None
     tool: Optional[str] = None
     arguments: Optional[Dict[str, Union[str, int, float, bool, Dict, List]]] = None
+    already_displayed_live: bool = False
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Message':
@@ -54,7 +55,8 @@ class Message:
             id=data.get('id'),
             server=data.get('server'),
             tool=data.get('tool'),
-            arguments=data.get('arguments')
+            arguments=data.get('arguments'),
+            already_displayed_live=data.get('already_displayed_live', False)
         )
 
     def to_dict(self) -> Dict:
@@ -90,6 +92,7 @@ class Message:
             result['tool'] = self.tool
         if self.arguments is not None:
             result['arguments'] = self.arguments
+        # already_displayed_live is transient, typically not part of to_dict for persistence
         return result
 
 @dataclass

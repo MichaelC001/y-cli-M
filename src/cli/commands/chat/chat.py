@@ -77,7 +77,6 @@ def chat(chat_id: Optional[str], latest: bool, model: Optional[str], verbose: bo
     
     if not chat_id_to_load:
         chat_id_to_load = generate_id()
-        logger.info(f"Starting new chat: {chat_id_to_load}")
 
     chat_app = ChatApp(bot_config=loaded_bot_config, chat_id=chat_id_to_load, verbose=verbose)
     asyncio.run(chat_app.chat())

@@ -73,7 +73,7 @@ class OpenAIFormatProvider(BaseProvider, DisplayManagerMixin):
 
         return prepared_messages
 
-    async def call_chat_completions(self, messages: List[Message], chat: Optional[Chat] = None, system_prompt: Optional[str] = None) -> Tuple[Message, Optional[str]]:
+    async def call_chat_completions(self, messages: List[Message], chat: Optional[Chat] = None, system_prompt: Optional[str] = None) -> Tuple[AsyncGenerator, Optional[str]]:
         """Get a streaming chat response from OpenRouter.
 
         Args:
@@ -81,7 +81,7 @@ class OpenAIFormatProvider(BaseProvider, DisplayManagerMixin):
             system_prompt: Optional system prompt to add at the start
 
         Returns:
-            Message: The assistant's response message
+            Tuple[AsyncGenerator, Optional[str]]: An async generator yielding response chunks, and an optional external ID.
 
         Raises:
             Exception: If API call fails
@@ -101,42 +101,39 @@ class OpenAIFormatProvider(BaseProvider, DisplayManagerMixin):
             body["max_tokens"] = self.bot_config.max_tokens
         if self.bot_config.reasoning_effort:
             body["reasoning_effort"] = self.bot_config.reasoning_effort
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.bot_config.base_url,
-            ) as client:
-                async with client.stream(
-                    "POST",
-                    self.bot_config.custom_api_path if self.bot_config.custom_api_path else "/chat/completions",
-                    headers={
-                        "HTTP-Referer": "https://luohy15.com",
-                        'X-Title': 'y-cli',
-                        "Authorization": f"Bearer {self.bot_config.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=body,
-                    timeout=60.0
-                ) as response:
-                    response.raise_for_status()
+        
+        # We will return the generator and the external_id (which is None for this provider currently)
+        # The actual streaming and message creation will be handled by ChatManager
+        async def stream_generator():
+            try:
+                async with httpx.AsyncClient(
+                    base_url=self.bot_config.base_url,
+                ) as client:
+                    async with client.stream(
+                        "POST",
+                        self.bot_config.custom_api_path if self.bot_config.custom_api_path else "/chat/completions",
+                        headers={
+                            "HTTP-Referer": "https://luohy15.com",
+                            'X-Title': 'y-cli',
+                            "Authorization": f"Bearer {self.bot_config.api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json=body,
+                        timeout=60.0
+                    ) as response:
+                        response.raise_for_status()
 
-                    if not self.display_manager:
-                        raise Exception("Display manager not set for streaming response")
+                        provider_info = None # Changed from provider to provider_info to avoid confusion
+                        model_info = None # Changed from model to model_info
 
-                    # Store provider and model info from first response chunk
-                    provider = None
-                    model = None
-
-                    async def generate_chunks():
-                        nonlocal provider, model
                         async for chunk in response.aiter_lines():
                             if chunk.startswith("data: "):
                                 try:
                                     data = json.loads(chunk[6:])
-                                    # Extract provider and model from first chunk that has them
-                                    if provider is None and data.get("provider"):
-                                        provider = data["provider"]
-                                    if model is None and data.get("model"):
-                                        model = data["model"]
+                                    if provider_info is None and data.get("provider"):
+                                        provider_info = data["provider"]
+                                    if model_info is None and data.get("model"):
+                                        model_info = data["model"]
 
                                     if data.get("choices"):
                                         delta = data["choices"][0].get("delta", {})
@@ -147,28 +144,20 @@ class OpenAIFormatProvider(BaseProvider, DisplayManagerMixin):
                                                 choices=[SimpleNamespace(
                                                     delta=SimpleNamespace(content=content, reasoning_content=reasoning_content)
                                                 )],
-                                                model=model,
-                                                provider=provider
+                                                model=model_info,
+                                                provider=provider_info
                                             )
                                             yield chunk_data
                                 except json.JSONDecodeError:
                                     continue
-                    content_full, reasoning_content_full = await self.display_manager.stream_response(generate_chunks())
-                    # build assistant message
-                    assistant_message = create_message(
-                        "assistant",
-                        content_full,
-                        reasoning_content=reasoning_content_full,
-                        provider=provider if provider is not None else self.bot_config.name,
-                        model=model,
-                        reasoning_effort=self.bot_config.reasoning_effort if self.bot_config.reasoning_effort else None
-                    )
-                    return assistant_message, None
+            except httpx.HTTPError as e:
+                # Instead of raising, yield an error object or re-raise if ChatManager can handle it
+                # For now, let it propagate to be caught by ChatManager
+                raise Exception(f"HTTP error getting chat response: {str(e)}")
+            except Exception as e:
+                raise Exception(f"Error getting chat response: {str(e)}")
 
-        except httpx.HTTPError as e:
-            raise Exception(f"HTTP error getting chat response: {str(e)}")
-        except Exception as e:
-            raise Exception(f"Error getting chat response: {str(e)}")
+        return stream_generator(), None # external_id is None for this provider as per original logic
 
     async def translate_text(self, text: str, target_language: str) -> Optional[str]:
         """Translate text using the OpenAI-compatible endpoint.
