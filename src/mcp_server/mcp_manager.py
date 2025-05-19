@@ -100,7 +100,8 @@ class MCPManager:
     async def execute_tool(self, server_name: str, tool_name: str, arguments: dict) -> str:
         """Execute an MCP tool and return the results"""
         try:
-            self.console.print(f"[cyan]Executing MCP tool '{tool_name}' on server '{server_name}' via daemon[/cyan]")
+            # Log to logger instead of directly printing to console
+            logger.info(f"Executing MCP tool '{tool_name}' on server '{server_name}' via daemon")
             # Use structured response
             response = await self.client.execute_tool_structured(server_name, tool_name, arguments)
             
@@ -108,11 +109,11 @@ class MCPManager:
                 return response.content or "No content returned from daemon"
             else:
                 error_msg = response.error or "Unknown error"
-                self.console.print(f"[red]Error from daemon: {error_msg}[/red]")
+                logger.error(f"Error from daemon: {error_msg}")
                 return f"Error executing MCP tool: {error_msg}"
         except Exception as e:
             error_msg = str(e)
-            self.console.print(f"[red]Error communicating with daemon: {error_msg}[/red]")
+            logger.error(f"Error communicating with daemon: {error_msg}")
             return f"Error communicating with daemon: {error_msg}"
 
     def clear_sessions(self):

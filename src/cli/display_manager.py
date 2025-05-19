@@ -59,12 +59,55 @@ class DisplayManager:
         # Ensure console width is detected, especially if running in a non-standard terminal
         # self.console.size = self.console.size # Rich handles this automatically, explicit setting might not always be best
         logger.debug("DisplayManager initialized.")
+        # Buffer tracking for tool calls
+        self.in_tool_call_block = False
+        self.buffer = ""
 
     def display_message_panel(self, message: Message, index: Optional[int] = None):
         logger.debug(f"display_message_panel called for role: {message.role}, already_displayed_live: {hasattr(message, 'already_displayed_live') and message.already_displayed_live}")
         if message.role == "assistant" and hasattr(message, 'already_displayed_live') and message.already_displayed_live:
             logger.debug("display_message_panel: Assistant message already displayed live, skipping panel.")
             return
+
+        # Hide MCP tool call/response details from terminal output (line-based)
+        def should_hide_line(line: str) -> bool:
+            # Only hide lines containing 'Executing MCP tool', not 'Tool use confirm'
+            hide_patterns = [
+                'Executing MCP tool',
+            ]
+            for p in hide_patterns:
+                if p in line or line.strip().startswith(p) or line.strip().endswith(p):
+                    return True
+            # Hide lines that are just tool/process info markers (e.g., ===hide left===)
+            if re.match(r'^=+hide( left| right)?=+$', line.strip()):
+                return True
+            return False
+
+        # Aggressively remove all MCP/tool/process info from content
+        def clean_mcp_info(text: str) -> str:
+            # Remove all <use_mcp_tool>...</use_mcp_tool> blocks (robust, multiline, any whitespace, even if inline)
+            text = re.sub(r'<use_mcp_tool>[\s\S]*?</use_mcp_tool>', '', text, flags=re.DOTALL)
+            # Remove any lines containing <use_mcp_tool or </use_mcp_tool> (even if malformed)
+            text = '\n'.join([line for line in text.splitlines() if '<use_mcp_tool' not in line and '</use_mcp_tool' not in line])
+            # Remove any lines mentioning use_mcp_tool or use-mcp-tool in any context
+            text = '\n'.join([line for line in text.splitlines() if 'use_mcp_tool' not in line and 'use-mcp-tool' not in line])
+            return text
+
+        # If the message content is a list, join it for pattern matching
+        content = message.content
+        if isinstance(content, list):
+            content = '\n'.join(str(part.text) for part in content if hasattr(part, 'text'))
+        if not content:
+            return
+        # Clean MCP/tool/process info aggressively
+        content = clean_mcp_info(content)
+        # Now split into lines and filter out lines containing 'Executing MCP tool' and any empty lines
+        filtered_lines = [line for line in content.splitlines() if 'Executing MCP tool' not in line and line.strip()]
+        filtered_content = '\n'.join(filtered_lines).strip()
+        if not filtered_content:
+            return  # Do not print if nothing remains
+        # Use filtered_content for display
+        display_content = filtered_content
 
         timestamp = f"[timestamp]{message.timestamp}[/timestamp]"
         index_str = f"[{index}] " if index is not None else ""
@@ -130,6 +173,10 @@ class DisplayManager:
             mcp_info_str += "```\n"
             display_content += f"\n{mcp_info_str}"
 
+        # If the panel would be blue (tool/process info), or the title contains tool/server info, skip printing it entirely
+        if current_border_style == "tool" or "[tool]Tool[/tool]" in panel_role_display_text or (model_info and "@" in model_info):
+            return
+
         self.console.print(Panel(
             Markdown(display_content),
             title=f"{index_str}{panel_role_display_text} {timestamp}{model_info}",
@@ -158,6 +205,10 @@ class DisplayManager:
         provider_info_extracted: Optional[str] = None
         model_info_extracted: Optional[str] = None
 
+        # Buffer for tool call handling
+        buffer = ""
+        in_tool_call = False
+
         async for chunk_data_obj in response_stream: 
             if provider_info_extracted is None and hasattr(chunk_data_obj, 'provider') and chunk_data_obj.provider:
                 provider_info_extracted = chunk_data_obj.provider
@@ -179,6 +230,7 @@ class DisplayManager:
 
             new_display_chunk = ""
 
+            # Process reasoning content first
             if chunk_reasoning is not None: # Process if not None
                 if not is_reasoning_block:
                     is_reasoning_block = True
@@ -188,17 +240,58 @@ class DisplayManager:
                     new_display_chunk += chunk_reasoning
                 collected_reasoning_content.append(chunk_reasoning) # Collect all non-None reasoning
 
-            if is_reasoning_block and chunk_reasoning is None and chunk_content is not None: # End of reasoning, start of summary (check Nones carefully)
+            if is_reasoning_block and chunk_reasoning is None and chunk_content is not None: # End of reasoning
                 if self.show_reasoning:
                     new_display_chunk += "\n> summary\n"
                 is_reasoning_block = False
 
-            if chunk_content is not None: # Process if not None
-                new_display_chunk += chunk_content
-                collected_content.append(chunk_content) # Collect all non-None content, including empty strings
+            # Process main content with tool call filtering
+            if chunk_content is not None:
+                # Add to full content collection for later use
+                collected_content.append(chunk_content)
+                
+                # Handle tool call filtering in streaming
+                buffer += chunk_content
+                
+                # Check for opening tag
+                if not in_tool_call and "<use_mcp_tool>" in buffer:
+                    # Extract and add text before the tool call
+                    start_idx = buffer.find("<use_mcp_tool>")
+                    if start_idx > 0:
+                        new_display_chunk += buffer[:start_idx]
+                    
+                    # Update buffer to keep only the part from the tag onwards
+                    buffer = buffer[start_idx:]
+                    in_tool_call = True
+                
+                # Check for closing tag if already in a tool call
+                elif in_tool_call and "</use_mcp_tool>" in buffer:
+                    # Found the end of the tool call
+                    end_idx = buffer.find("</use_mcp_tool>") + len("</use_mcp_tool>")
+                    
+                    # Discard the tool call part
+                    in_tool_call = False
+                    
+                    # Keep text after the tool call
+                    if end_idx < len(buffer):
+                        new_display_chunk += buffer[end_idx:]
+                    
+                    # Reset buffer
+                    buffer = ""
+                
+                # If not in tool call, add content directly
+                elif not in_tool_call:
+                    new_display_chunk += chunk_content
+                
+                # If in tool call, just accumulate in buffer but don't display
 
+            # Add to stream buffer if there's anything to display
             if new_display_chunk: 
                 stream_buffer.add_content(new_display_chunk)
+        
+        # After streaming is complete
+        # If we're still inside a tool call at the end, we should discard that partial content
+        # Text already displayed is fine, just don't display any incomplete tool call
         
         return "".join(collected_content), "".join(collected_reasoning_content), provider_info_extracted, model_info_extracted
 

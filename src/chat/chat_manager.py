@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
+import sys
 
 from chat.models import Chat, Message
 from .repository import ChatRepository
@@ -104,20 +105,29 @@ class ChatManager:
                     logger.info(f"Auto-confirming tool use for {server_name}/{tool_name}")
                 return True
 
-        prompt_message = f"Tool use confirm [{server_name}/{tool_name}] (y/n): "
+        # Use tool confirmation prompt with ansicyan color to match the Input prompt
+        cyan_color = "\033[36m"  # ANSI cyan to match 'ansicyan' from input_manager.py
+        reset_color = "\033[0m"
+        prompt_message = f"{cyan_color}Tool use confirm [{server_name}/{tool_name}] (y/n): {reset_color}"
         if not server_name and not tool_name:
-            prompt_message = "Tool use confirm (y/n): " 
+            prompt_message = f"{cyan_color}Tool use confirm (y/n): {reset_color}" 
         
-        self.display_manager.console.print() # Add a newline for spacing
+        # No longer add a newline before the prompt
+        # Output prompt directly
+        sys.stdout.write(prompt_message)
+        sys.stdout.flush()
+        
         while True:
             # Use standard input() for simple y/n confirmation
-            response = input(prompt_message).strip().lower()
+            response = input().strip().lower()
             if response in ['y', 'yes']:
                 return True
             elif response in ['n', 'no']:
                 return False
-            # If response is invalid, print error message directly using console
-            self.display_manager.console.print("[yellow]Please answer 'y' or 'n'[/yellow]")
+            # If response is invalid, print error message directly
+            sys.stdout.write("[yellow]Please answer 'y' or 'n'[/yellow]\n")
+            sys.stdout.write(prompt_message)
+            sys.stdout.flush()
 
     async def process_user_message(self, user_message: Message):
         self.messages.append(user_message)
@@ -230,6 +240,17 @@ class ChatManager:
 
         # Execute tool and get results
         tool_results = await self.mcp_manager.execute_tool(server_name, tool_name, arguments)
+        
+        # Normalize the tool results to remove extra blank lines
+        # 1. Split by newlines
+        # 2. Filter out empty lines or lines with just whitespace
+        # 3. Join with single newlines
+        if tool_results:
+            lines = tool_results.splitlines()
+            # Keep non-empty lines
+            non_empty_lines = [line for line in lines if line.strip()]
+            # Join with single newlines
+            tool_results = "\n".join(non_empty_lines)
 
         # Create user message with tool results and include tool info
         user_message = create_message("user", tool_results, server=server_name, tool=tool_name, arguments=arguments)
