@@ -14,6 +14,7 @@ from collections import deque
 import sys
 from rich.status import Status
 from loguru import logger
+import os
 
 # Custom theme for role-based colors
 custom_theme = Theme({
@@ -132,7 +133,8 @@ class DisplayManager:
         self.console.print(Panel(
             Markdown(display_content),
             title=f"{index_str}{panel_role_display_text} {timestamp}{model_info}",
-            border_style=current_border_style
+            border_style=current_border_style,
+            padding=0
         ))
 
     async def _collect_stream_content(self, response_stream, stream_buffer: StreamBuffer) -> Tuple[str, str, Optional[str], Optional[str]]:
@@ -344,7 +346,8 @@ class DisplayManager:
         self.console.print(Panel(
             Markdown(help_content),
             title="[bold]Help Information[/bold]",
-            border_style="yellow"
+            border_style="yellow",
+            padding=0
         ))
 
     def display_chat_history(self, messages: List[Message]):
@@ -356,7 +359,8 @@ class DisplayManager:
                     self.display_message_panel(message, index=i)
                 self.console.print(Panel(
                     "[bold]Type your message to continue the conversation[/bold]",
-                    border_style="yellow"
+                    border_style="yellow",
+                    padding=0
                 ))
 
     def print_error(self, error: str, show_traceback: bool = False):
@@ -369,7 +373,8 @@ class DisplayManager:
         self.console.print(Panel(
             Markdown(error_content),
             title="[red]Error[/red]",
-            border_style="red"
+            border_style="red",
+            padding=0
         ))
 
     def clear_lines(self, lines: int):
